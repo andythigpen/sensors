@@ -6,9 +6,11 @@
 #include <MySensor.h>
 
 // Config
+#define SENSOR_VERSION      "1.8"
 #define DEBUG               1
 #define SLEEP_TIME          300000
 #define BATTERY_POWERED     1       // 0 = wall plug, 1 = battery
+#define HAS_REGULATOR       1       // 0 = no boost converter
 
 // PIR motion sensor
 #define MOTION_INPUT_PIN    3
@@ -23,6 +25,7 @@
 #define LIGHT_RESISTOR_OFF  LOW
 
 // Battery level
+#define EXTERNAL_VCC_PIN    A2
 #define VBATMAX             3.1     // The voltage of New Batteries
 #define VBATDROPOUT         1.8     // The battery dropout voltage
 
@@ -36,16 +39,18 @@ bool timerExpired;
 void setup() {
     // setup the sensor and communicate w/gateway
     gw.begin();
-    gw.sendSketchInfo("Motion Sensor", "1.7");
+    gw.sendSketchInfo("Motion Sensor", SENSOR_VERSION);
     gw.present(MOTION_CHILD_ID, S_MOTION);
     gw.present(LIGHT_CHILD_ID, S_LIGHT_LEVEL);
 
     // setup the pins
     pinMode(MOTION_INPUT_PIN, INPUT);
     pinMode(LIGHT_ANALOG_PIN, INPUT);
+
 #if BATTERY_POWERED
     pinMode(LIGHT_ENABLE_PIN, OUTPUT);
     digitalWrite(LIGHT_ENABLE_PIN, LIGHT_RESISTOR_OFF);
+    pinMode(EXTERNAL_VCC_PIN, INPUT);
 #endif
 
     // send initial state(s)
@@ -59,27 +64,37 @@ void setup() {
     gw.sleep(30000);
 #if DEBUG
     Serial.println("Ready.");
+    Serial.println("Motion Sensor v" SENSOR_VERSION);
+    Serial.print("Battery powered: ");
+    Serial.println(BATTERY_POWERED ? "yes" : "no");
+    Serial.print("Has regulator: ");
+    Serial.println(HAS_REGULATOR ? "yes" : "no");
+    Serial.print("Sleep time: ");
+    Serial.println(SLEEP_TIME);
 #endif
 }
 
 void loop() {
     bool tripped = readMotionSensor();
     int lightLevel = readLightSensor();
+
+#if BATTERY_POWERED
     long batteryLevel = readBatteryLevel();
+    gw.sendBatteryLevel(batteryLevel);
+#endif
 
     gw.send(motionMsg.set(tripped ? "1" : "0"));
     gw.send(lightMsg.set(lightLevel));
-    if (batteryLevel >= 0) {
-        gw.sendBatteryLevel(batteryLevel);
-    }
 
 #if DEBUG
     Serial.print("pir: ");
     Serial.print(tripped);
     Serial.print(" light: ");
     Serial.print(lightLevel);
+#if BATTERY_POWERED
     Serial.print(" battery: ");
     Serial.println(batteryLevel);
+#endif
 #endif
 
     // go to sleep for a bit to allow the motion sensor to settle
@@ -114,14 +129,12 @@ int readLightSensor() {
 }
 
 long readBatteryLevel() {
-#if BATTERY_POWERED
-    long batteryLevel = ((readVcc() - (VBATDROPOUT * 1000)) / (((VBATMAX-VBATDROPOUT) * 10)));
-    if (batteryLevel > 100)
-        batteryLevel = 100;
-    else if (batteryLevel < 0)
-        batteryLevel = 0;
-    return batteryLevel;
+    long batteryLevel;
+#if HAS_REGULATOR
+    batteryLevel = analogRead(EXTERNAL_VCC_PIN);
+    batteryLevel = map(batteryLevel, 594, 1023, 0, 100);
 #else
-    return -1;
+    batteryLevel = ((readVcc() - (VBATDROPOUT * 1000)) / (((VBATMAX-VBATDROPOUT) * 10)));
 #endif
+    return constrain(batteryLevel, 0, 100);
 }
