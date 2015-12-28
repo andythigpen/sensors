@@ -6,9 +6,9 @@
 #include <MySensor.h>
 
 // Config
-#define SENSOR_VERSION      "1.8"
+#define SENSOR_VERSION      "1.9"
 #define DEBUG               1
-#define SLEEP_TIME          300000
+#define SLEEP_TIME          600000
 #define BATTERY_POWERED     1       // 0 = wall plug, 1 = battery
 #define HAS_REGULATOR       1       // 0 = no boost converter
 
@@ -31,10 +31,11 @@
 
 long readVcc();
 
-MySensor gw;
+MyTransportNRF24 transport(RF24_CE_PIN, RF24_CS_PIN, RF24_PA_HIGH);
+MySensor gw(transport);
 MyMessage motionMsg(MOTION_CHILD_ID, V_TRIPPED);
 MyMessage lightMsg(LIGHT_CHILD_ID, V_LIGHT_LEVEL);
-bool timerExpired;
+bool interrupted = false;
 
 void setup() {
     // setup the sensor and communicate w/gateway
@@ -75,33 +76,46 @@ void setup() {
 }
 
 void loop() {
-    bool tripped = readMotionSensor();
-    int lightLevel = readLightSensor();
-
+    if (interrupted) {
+        reportMotion();
+    }
+    else {
+        reportLightLevel();
 #if BATTERY_POWERED
-    long batteryLevel = readBatteryLevel();
-    gw.sendBatteryLevel(batteryLevel);
+        reportBatteryLevel();
 #endif
+        // ignore false positives of the motion interrupt
+        gw.sleep(2000);
+    }
 
+    interrupted = gw.sleep(MOTION_INTERRUPT, CHANGE, SLEEP_TIME);
+}
+
+void reportMotion() {
+    bool tripped = readMotionSensor();
     gw.send(motionMsg.set(tripped ? "1" : "0"));
-    gw.send(lightMsg.set(lightLevel));
-
 #if DEBUG
     Serial.print("pir: ");
-    Serial.print(tripped);
-    Serial.print(" light: ");
-    Serial.print(lightLevel);
-#if BATTERY_POWERED
-    Serial.print(" battery: ");
+    Serial.println(tripped);
+#endif
+}
+
+void reportLightLevel() {
+    int lightLevel = readLightSensor();
+    gw.send(lightMsg.set(lightLevel));
+#if DEBUG
+    Serial.print("light: ");
+    Serial.println(lightLevel);
+#endif
+}
+
+void reportBatteryLevel() {
+    uint8_t batteryLevel = readBatteryLevel();
+    gw.sendBatteryLevel(batteryLevel);
+#if DEBUG
+    Serial.print("battery: ");
     Serial.println(batteryLevel);
 #endif
-#endif
-
-    // go to sleep for a bit to allow the motion sensor to settle
-    if (timerExpired)
-        gw.sleep(2000);
-
-    timerExpired = gw.sleep(MOTION_INTERRUPT, CHANGE, SLEEP_TIME);
 }
 
 bool readMotionSensor() {
@@ -128,7 +142,7 @@ int readLightSensor() {
     return lightLevel;
 }
 
-long readBatteryLevel() {
+uint8_t readBatteryLevel() {
     long batteryLevel;
 #if HAS_REGULATOR
     batteryLevel = analogRead(EXTERNAL_VCC_PIN);
