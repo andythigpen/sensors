@@ -16,6 +16,8 @@
 #include <MFRC522.h>
 #include <MySensor.h>
 
+#define SENSOR_VERSION  "1.0"
+
 #define RST_PIN         5
 #define SS_PIN          6
 #define LEDS_PIN        3
@@ -28,7 +30,7 @@
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 MySensor gw;
-MyMessage msg(CHILD_ID, V_STATUS);
+MyMessage msg(CHILD_ID, V_SCENE_ON);
 
 unsigned int cardState = CARD_AWAY;
 unsigned long nextUpdate = 0;
@@ -41,7 +43,8 @@ void setup() {
 
     // MySensors will setup Serial...
     gw.begin();
-    gw.present(CHILD_ID, S_BINARY);
+    gw.sendSketchInfo("RFID Sensor", SENSOR_VERSION);
+    gw.present(CHILD_ID, S_SCENE_CONTROLLER);
 
     // setup LEDs
     pinMode(LEDS_PIN, OUTPUT);
