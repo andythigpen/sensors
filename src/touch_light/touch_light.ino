@@ -30,7 +30,7 @@
 #define LED_B           6       // PWM pin
 #define TOTAL_PADS      3       // Total number of touch pads
 
-// Scenes
+// Scene commands
 #define NONE        0
 #define BRIGHTEN    1
 #define DIM         2
@@ -38,6 +38,7 @@
 #define LIGHTS_OFF  4
 #define SCRIPT1     5
 #define SCRIPT2     6
+#define SUNRISE     7
 
 // MySensors
 MySensor gw;
@@ -56,6 +57,35 @@ MyMessage msg(CHILD_ID, V_SCENE_ON);
 //      * pulse leds
 // * On receive script done:
 //      * stop pulsing leds
+
+void handleMessage(const MyMessage &msg) {
+    if (mGetCommand(msg) != C_SET) {
+        Serial.println("Unknown command");
+        return;
+    }
+    if (msg.type != V_SCENE_ON && msg.type != V_SCENE_OFF) {
+        Serial.println("Invalid type");
+        return;
+    }
+
+    int scene = msg.getInt();
+    switch (scene) {
+    case SCRIPT1:
+    case SCRIPT2:
+        if (msg.type == V_SCENE_ON)
+            animations::slowingPulse();
+        else
+            animations::reset();
+        break;
+
+    case SUNRISE:
+        animations::sunrise();
+        break;
+
+    default:
+        Serial.println("Unknown scene");
+    }
+}
 
 // Sends the scene to the gateway with up to 3 retries on failure
 bool sendScene(int scene) {
@@ -204,6 +234,7 @@ void setup() {
 void loop() {
     touch::update();
     animations::update();
+    gw.process();
 
 #ifdef DEBUG
     readDebugCommands();
