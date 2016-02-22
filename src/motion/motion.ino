@@ -6,19 +6,18 @@
 #include <MySensor.h>
 
 // Config
-#define SENSOR_VERSION      "1.9"
+#define SENSOR_VERSION      "1.10"
 #define DEBUG               1
-#define SLEEP_TIME          600000
+#define UPDATE_TIME         600000
 #define BATTERY_POWERED     1       // 0 = wall plug, 1 = battery
 #define HAS_REGULATOR       1       // 0 = no boost converter
 
 // PIR motion sensor
 #define MOTION_INPUT_PIN    3
-#define MOTION_INTERRUPT    (MOTION_INPUT_PIN - 2)
 #define MOTION_CHILD_ID     1
 
 // Light level sensor
-#define LIGHT_ENABLE_PIN    4
+#define LIGHT_ENABLE_PIN    4       // only used on battery power
 #define LIGHT_ANALOG_PIN    A0      // analog pin A0 (not pin 0)
 #define LIGHT_CHILD_ID      2
 #define LIGHT_RESISTOR_ON   HIGH
@@ -31,15 +30,33 @@
 
 long readVcc();
 
+#if BATTERY_POWERED
 MyTransportNRF24 transport(RF24_CE_PIN, RF24_CS_PIN, RF24_PA_HIGH);
 MySensor gw(transport);
+#else
+MySensor gw;
+#endif
+
 MyMessage motionMsg(MOTION_CHILD_ID, V_TRIPPED);
 MyMessage lightMsg(LIGHT_CHILD_ID, V_LIGHT_LEVEL);
-bool interrupted = false;
+volatile bool interrupted = false;
+
+#if !BATTERY_POWERED
+unsigned long long nextUpdate = 0;
+void motionInterrupt() {
+    interrupted = true;
+}
+#endif
 
 void setup() {
     // setup the sensor and communicate w/gateway
+#if BATTERY_POWERED
     gw.begin();
+#else
+    // if plugged in, act as a repeater
+    gw.begin(NULL, AUTO, true);
+#endif
+
     gw.sendSketchInfo("Motion Sensor", SENSOR_VERSION);
     gw.present(MOTION_CHILD_ID, S_MOTION);
     gw.present(LIGHT_CHILD_ID, S_LIGHT_LEVEL);
@@ -52,6 +69,9 @@ void setup() {
     pinMode(LIGHT_ENABLE_PIN, OUTPUT);
     digitalWrite(LIGHT_ENABLE_PIN, LIGHT_RESISTOR_OFF);
     pinMode(EXTERNAL_VCC_PIN, INPUT);
+#else
+    attachInterrupt(digitalPinToInterrupt(MOTION_INPUT_PIN),
+                    motionInterrupt, CHANGE);
 #endif
 
     // send initial state(s)
@@ -63,6 +83,7 @@ void setup() {
     Serial.println("Waiting for PIR to stabilize...");
 #endif
     gw.sleep(30000);
+
 #if DEBUG
     Serial.println("Ready.");
     Serial.println("Motion Sensor v" SENSOR_VERSION);
@@ -70,25 +91,43 @@ void setup() {
     Serial.println(BATTERY_POWERED ? "yes" : "no");
     Serial.print("Has regulator: ");
     Serial.println(HAS_REGULATOR ? "yes" : "no");
-    Serial.print("Sleep time: ");
-    Serial.println(SLEEP_TIME);
+    Serial.print("Update time: ");
+    Serial.println(UPDATE_TIME);
+    Serial.print("Interrupt pin: ");
+    Serial.println(digitalPinToInterrupt(MOTION_INPUT_PIN));
 #endif
 }
 
 void loop() {
     if (interrupted) {
+        interrupted = false;
         reportMotion();
     }
     else {
-        reportLightLevel();
 #if BATTERY_POWERED
+        // waking up on battery w/o an interrupt means
+        // that it's time to report to the gateway
+        reportLightLevel();
         reportBatteryLevel();
-#endif
         // ignore false positives of the motion interrupt
         gw.sleep(2000);
+#else
+        unsigned long long now = millis();
+        if (now >= nextUpdate) {
+            nextUpdate = now + UPDATE_TIME;
+            reportLightLevel();
+            // ignore false positives of the motion interrupt
+            gw.wait(2000);
+        }
+#endif
     }
 
-    interrupted = gw.sleep(MOTION_INTERRUPT, CHANGE, SLEEP_TIME);
+#if BATTERY_POWERED
+    interrupted = gw.sleep(digitalPinToInterrupt(MOTION_INPUT_PIN), CHANGE,
+                                                 UPDATE_TIME);
+#else
+    gw.process();
+#endif
 }
 
 void reportMotion() {
@@ -145,9 +184,11 @@ int readLightSensor() {
 uint8_t readBatteryLevel() {
     long batteryLevel;
 #if HAS_REGULATOR
+    // read the battery level from an external pin
     batteryLevel = analogRead(EXTERNAL_VCC_PIN);
     batteryLevel = map(batteryLevel, 594, 1023, 0, 100);
 #else
+    // read the battery level from internal reference
     batteryLevel = ((readVcc() - (VBATDROPOUT * 1000)) / (((VBATMAX-VBATDROPOUT) * 10)));
 #endif
     return constrain(batteryLevel, 0, 100);
