@@ -49,3 +49,7 @@ void Timer::delay(unsigned long ms) {
 int Timer::repeat() {
     return _repeat;
 }
+
+bool Timer::isActive() {
+    return _callback != NULL;
+}

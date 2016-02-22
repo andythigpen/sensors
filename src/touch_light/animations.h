@@ -15,6 +15,9 @@ bool init(byte led_r, byte led_g, byte led_b);
 // Runs the animation callbacks, if necessary
 void update();
 
+// Returns true if there is currently an animation scheduled, false otherwise
+bool isActive();
+
 // ===================
 // Animation Functions
 //
@@ -40,7 +43,10 @@ void slowingPulse();
 void sunrise();
 
 // Flashes red forever
-void errorCondition();
+void error();
+
+// Flashes green once
+void success();
 };
 
 #endif

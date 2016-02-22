@@ -30,6 +30,10 @@ void update() {
     timer.process();
 }
 
+bool isActive() {
+    return timer.isActive();
+}
+
 void reset() {
     timer.once(0, []() {
         red = green = blue = 255;
@@ -136,14 +140,19 @@ void sunrise() {
     }, 254);
 }
 
-void errorCondition() {
-    red = blue = green = 255;
-    digitalWrite(led_r, HIGH);
+void error() {
+    red = 0;
+    blue = green = 255;
+    digitalWrite(led_r, LOW);
     digitalWrite(led_g, HIGH);
     digitalWrite(led_b, HIGH);
 
     timer.every(500, []() {
-        if (red == 255) {
+        green = blue = 255;
+        digitalWrite(led_g, HIGH);
+        digitalWrite(led_b, HIGH);
+        // 2:off, 1:on, 0:off
+        if (timer.repeat() == 1) {
             red = 0;
             digitalWrite(led_r, LOW);
         }
@@ -151,7 +160,30 @@ void errorCondition() {
             red = 255;
             digitalWrite(led_r, HIGH);
         }
-    });
+    }, 2);
+}
+
+void success() {
+    green = 0;
+    red = blue = 255;
+    digitalWrite(led_r, HIGH);
+    digitalWrite(led_g, LOW);
+    digitalWrite(led_b, HIGH);
+
+    timer.every(500, []() {
+        red = blue = 255;
+        digitalWrite(led_r, HIGH);
+        digitalWrite(led_b, HIGH);
+        // 2:off, 1:on, 0:off
+        if (timer.repeat() == 1) {
+            green = 0;
+            digitalWrite(led_g, LOW);
+        }
+        else {
+            green = 255;
+            digitalWrite(led_g, HIGH);
+        }
+    }, 2);
 }
 
 }

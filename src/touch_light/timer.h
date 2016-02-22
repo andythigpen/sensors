@@ -31,6 +31,9 @@ public:
     // Returns the current repeat value
     int repeat();
 
+    // Returns true if there is a callback set, false otherwise
+    bool isActive();
+
 protected:
     unsigned long _interval;
     unsigned long _nextTime;

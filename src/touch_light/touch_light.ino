@@ -43,6 +43,7 @@
 // MySensors
 MySensor gw;
 MyMessage msg(CHILD_ID, V_SCENE_ON);
+bool responseReceived = false;
 
 //TODO:
 // * Modal UI
@@ -50,7 +51,6 @@ MyMessage msg(CHILD_ID, V_SCENE_ON);
 //      * Tapping 1 (middle) switches modes to another room; switch colors
 //        for each mode
 //      * After 5 seconds w/ no input, mode times out and goes back to default
-// * Add gw.process() to the loop so that messages can be received
 // * On receive wakeup:
 //      * start sunrise routine where leds slowly fade up
 // * On receive script start:
@@ -58,24 +58,57 @@ MyMessage msg(CHILD_ID, V_SCENE_ON);
 // * On receive script done:
 //      * stop pulsing leds
 
+// Sends the scene to the gateway with up to 3 retries on failure
+bool sendScene(int scene, bool blocking=true, int ms=1000) {
+    /* byte errCnt = 0; */
+    /* bool success = false; */
+    /* while (!success && errCnt++ < 3) { */
+    /*     success = gw.send(msg.set(scene)); */
+    /* } */
+    /* return success; */
+    responseReceived = false;
+    gw.send(msg.set(scene));
+
+    if (!blocking)
+        return true;
+
+    unsigned long long timeout = millis() + ms;
+
+    while (!responseReceived && millis() < timeout)
+        gw.process();
+
+    return responseReceived;
+}
+
+// handles incoming messages from the MySensors gateway
 void handleMessage(const MyMessage &msg) {
     if (mGetCommand(msg) != C_SET) {
         Serial.println("Unknown command");
         return;
     }
-    if (msg.type != V_SCENE_ON && msg.type != V_SCENE_OFF) {
+    if (msg.type != V_SCENE_ON) {
         Serial.println("Invalid type");
         return;
     }
 
+    // this is a valid response message
+    responseReceived = true;
+
     int scene = msg.getInt();
     switch (scene) {
+    case BRIGHTEN:
+    case DIM:
+    case LIGHTS_OFF:
+    case LIGHTS_ON:
+        animations::success();
+        break;
+
     case SCRIPT1:
     case SCRIPT2:
-        if (msg.type == V_SCENE_ON)
-            animations::slowingPulse();
-        else
+        if (animations::isActive())
             animations::reset();
+        else
+            animations::slowingPulse();
         break;
 
     case SUNRISE:
@@ -85,17 +118,11 @@ void handleMessage(const MyMessage &msg) {
     default:
         Serial.println("Unknown scene");
     }
+
+    // clear the current scene on the gateway
+    sendScene(NONE, false);
 }
 
-// Sends the scene to the gateway with up to 3 retries on failure
-bool sendScene(int scene) {
-    byte errCnt = 0;
-    bool success = false;
-    while (!success && errCnt++ < 3) {
-        success = gw.send(msg.set(scene));
-    }
-    return success;
-}
 
 // called when a touch event starts
 void onTouchStart(touch::TouchEvent &event) {
@@ -130,10 +157,8 @@ void onLongTouch(touch::TouchEvent &event) {
     Serial.println(success);
 #endif
 
-    if (success)
-        animations::longPressEnd();
-    else
-        animations::invalidTouch();
+    if (!success)
+        animations::error();
 }
 
 void onShortTouch(touch::TouchEvent &event) {
@@ -151,10 +176,8 @@ void onShortTouch(touch::TouchEvent &event) {
     Serial.println(success);
 #endif
 
-    if (success)
-        animations::shortPress();
-    else
-        animations::invalidTouch();
+    if (!success)
+        animations::error();
 }
 
 void onIgnoreTouch(touch::TouchEvent &event) {
@@ -223,9 +246,7 @@ void setup() {
 
     if (!touch::init(MPR121_ADDR, TOTAL_PADS)) {
         Serial.println("MPR121 not found!");
-        animations::errorCondition();
-        while (1)
-            animations::update();
+        while (1);
     }
     Serial.println("MPR121 found...");
     setupTouchEvents();
