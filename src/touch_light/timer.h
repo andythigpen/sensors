@@ -34,6 +34,9 @@ public:
     // Returns true if there is a callback set, false otherwise
     bool isActive();
 
+    // Returns the current callback
+    TimerFn getCallback();
+
 protected:
     unsigned long _interval;
     unsigned long _nextTime;

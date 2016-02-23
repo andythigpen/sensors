@@ -39,34 +39,41 @@
 #define SCRIPT1     5
 #define SCRIPT2     6
 #define SUNRISE     7
+#define MAX_SCENE   7   // this should always == the last scene
+
+#define MAX_MODE    3
 
 // MySensors
 MySensor gw;
 MyMessage msg(CHILD_ID, V_SCENE_ON);
 bool responseReceived = false;
+byte mode = 0;
+Timer modeTimer;
 
+// Sets the current "mode" for the touch commands
 //TODO:
-// * Modal UI
-//      * By default commands control lights in bedroom
-//      * Tapping 1 (middle) switches modes to another room; switch colors
-//        for each mode
-//      * After 5 seconds w/ no input, mode times out and goes back to default
-// * On receive wakeup:
-//      * start sunrise routine where leds slowly fade up
-// * On receive script start:
-//      * pulse leds
-// * On receive script done:
-//      * stop pulsing leds
+void setMode(byte m) {
+    mode = m;
+    if (mode >= MAX_MODE)
+        mode = 0;   // wrap
 
-// Sends the scene to the gateway with up to 3 retries on failure
-bool sendScene(int scene, bool blocking=true, int ms=1000) {
-    /* byte errCnt = 0; */
-    /* bool success = false; */
-    /* while (!success && errCnt++ < 3) { */
-    /*     success = gw.send(msg.set(scene)); */
-    /* } */
-    /* return success; */
-    responseReceived = false;
+    switch (mode) {
+        case 0: animations::reset(); break;
+        case 1: animations::mode1(); break;
+        case 2: animations::mode2(); break;
+        case 3: animations::mode3(); break;
+    }
+
+    // reset back to 0
+    if (mode != 0) {
+        modeTimer.once(5000, []() {
+            mode = 0;
+        });
+    }
+}
+
+// Sends the scene to the gateway and optionally waits for a response
+bool sendScene(int scene, bool blocking=true, int ms=2000) {
     gw.send(msg.set(scene));
 
     if (!blocking)
@@ -74,8 +81,12 @@ bool sendScene(int scene, bool blocking=true, int ms=1000) {
 
     unsigned long long timeout = millis() + ms;
 
-    while (!responseReceived && millis() < timeout)
+    responseReceived = false;
+    while (!responseReceived && millis() < timeout) {
+        // don't block animations while waiting for a response
+        animations::update();
         gw.process();
+    }
 
     return responseReceived;
 }
@@ -95,6 +106,10 @@ void handleMessage(const MyMessage &msg) {
     responseReceived = true;
 
     int scene = msg.getInt();
+#ifdef DEBUG
+    Serial.print("recv  | Received message: ");
+    Serial.println(scene);
+#endif
     switch (scene) {
     case BRIGHTEN:
     case DIM:
@@ -105,14 +120,17 @@ void handleMessage(const MyMessage &msg) {
 
     case SCRIPT1:
     case SCRIPT2:
-        if (animations::isActive())
+        if (animations::isScheduled(animations::slowingPulse))
             animations::reset();
         else
             animations::slowingPulse();
         break;
 
     case SUNRISE:
-        animations::sunrise();
+        if (animations::isScheduled(animations::sunrise))
+            animations::reset();
+        else
+            animations::sunrise();
         break;
 
     default:
@@ -130,7 +148,7 @@ void onTouchStart(touch::TouchEvent &event) {
     Serial.print("start | ");
     Serial.println(event.start);
 #endif
-    animations::longPressStart();
+    animations::touchStart();
 }
 
 void onTouchEnd(touch::TouchEvent &event) {
@@ -145,10 +163,14 @@ void onTouchEnd(touch::TouchEvent &event) {
 void onLongTouch(touch::TouchEvent &event) {
     bool success = false;
 
+    animations::touchEnd();
+
     if (event.pads == ~(~0 << TOTAL_PADS))
         success = sendScene(SCRIPT2);
     else if (event.pads == _BV(0))
         success = sendScene(LIGHTS_ON);
+    else if (event.pads == _BV(1))
+        success = setMode(mode++);
     else if (event.pads == _BV(2))
         success = sendScene(LIGHTS_OFF);
 
@@ -163,6 +185,8 @@ void onLongTouch(touch::TouchEvent &event) {
 
 void onShortTouch(touch::TouchEvent &event) {
     bool success = false;
+
+    animations::touchEnd();
 
     if (event.pads == ~(~0 << TOTAL_PADS))
         success = sendScene(SCRIPT1);
@@ -211,19 +235,18 @@ void readDebugCommands() {
     while (Serial.available()) {
         int cmd = Serial.read();
         switch (cmd) {
-            case 'q': animations::red -= 5; break;
-            case 'a': animations::red += 5; break;
-            case 'w': animations::green -= 5; break;
-            case 's': animations::green += 5; break;
-            case 'e': animations::blue -= 5; break;
-            case 'd': animations::blue += 5; break;
+            case 'q': animations::red += 5; break;
+            case 'a': animations::red -= 5; break;
+            case 'w': animations::green += 5; break;
+            case 's': animations::green -= 5; break;
+            case 'e': animations::blue += 5; break;
+            case 'd': animations::blue -= 5; break;
             case 'r': animations::reset(); break;
             case 'f': animations::red = animations::green = animations::blue = 0; break;
             case 't': animations::sunrise(); break;
         }
-        analogWrite(LED_R, animations::red);
-        analogWrite(LED_G, animations::green);
-        analogWrite(LED_B, animations::blue);
+        animations::setColor(
+            animations::red, animations::blue, animations::green);
         Serial.print(animations::red);
         Serial.print(' ');
         Serial.print(animations::green);
@@ -238,8 +261,8 @@ void setup() {
     animations::init(LED_R, LED_G, LED_B);
 
     // MySensors will setup Serial...
-    gw.begin();
-    gw.sendSketchInfo("Touch Light Controller", SENSOR_VERSION);
+    gw.begin(handleMessage);
+    gw.sendSketchInfo("Touch Controller", SENSOR_VERSION);
     gw.present(CHILD_ID, S_SCENE_CONTROLLER);
 
     Serial.println("Starting v" SENSOR_VERSION);

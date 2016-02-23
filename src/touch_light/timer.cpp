@@ -53,3 +53,7 @@ int Timer::repeat() {
 bool Timer::isActive() {
     return _callback != NULL;
 }
+
+Timer::TimerFn Timer::getCallback() {
+    return _callback;
+}

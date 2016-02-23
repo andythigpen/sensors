@@ -31,16 +31,18 @@ void startTouch() {
 }
 
 void endTouch() {
+    bool longPress, shortPress;
+
     event.length = millis() - event.start;
 
     if (event.length < minTouchThreshold) {
         if (onIgnoreTouch)
             onIgnoreTouch(event);
-        return;
+        goto cleanup;
     }
 
-    bool longPress = (event.length >= longTouchThreshold);
-    bool shortPress = (event.length <= shortTouchThreshold);
+    longPress = (event.length >= longTouchThreshold);
+    shortPress = (event.length <= shortTouchThreshold);
 
     if (longPress && onLongTouch)
         onLongTouch(event);

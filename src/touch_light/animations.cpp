@@ -4,11 +4,62 @@
 namespace animations {
 
 Timer timer;
-byte red = 255, green = 255, blue = 255;
+byte red = 0, green = 0, blue = 0;
 
 byte led_r = 3;
 byte led_g = 5;
 byte led_b = 6;
+
+void setColor(byte r, byte g, byte b) {
+    red = r;
+    green = g;
+    blue = b;
+
+    // The LEDs are controlled by a P-channel mosfet which means that
+    // HIGH is fully off and LOW is fully ON
+    // This "reverses" the passed in colors so that an argument of 0 actually
+    // means fully off and 255 is fully on.
+    byte invr = ~r;
+    byte invg = ~g;
+    byte invb = ~b;
+
+#ifdef DEBUG
+    Serial.print("color | ");
+    Serial.print(r);
+    Serial.print(" ");
+    Serial.print(g);
+    Serial.print(" ");
+    Serial.print(b);
+    Serial.print(" : ");
+    Serial.print(invr);
+    Serial.print(" ");
+    Serial.print(invg);
+    Serial.print(" ");
+    Serial.println(invb);
+#endif
+
+    // use digitalWrite so that pins are fully off or on
+    if (invr == 255)
+        digitalWrite(led_r, HIGH);
+    else if (invr == 0)
+        digitalWrite(led_r, LOW);
+    else
+        analogWrite(led_r, invr);
+
+    if (invg == 255)
+        digitalWrite(led_g, HIGH);
+    else if (invg == 0)
+        digitalWrite(led_g, LOW);
+    else
+        analogWrite(led_g, invg);
+
+    if (invb == 255)
+        digitalWrite(led_b, HIGH);
+    else if (invb == 0)
+        digitalWrite(led_b, LOW);
+    else
+        analogWrite(led_b, invb);
+}
 
 bool init(byte r, byte g, byte b) {
     led_r = r;
@@ -19,9 +70,7 @@ bool init(byte r, byte g, byte b) {
     pinMode(led_r, OUTPUT);
     pinMode(led_g, OUTPUT);
     pinMode(led_b, OUTPUT);
-    digitalWrite(led_r, HIGH);
-    digitalWrite(led_g, HIGH);
-    digitalWrite(led_b, HIGH);
+    setColor(0, 0, 0);
 
     return true;
 }
@@ -34,71 +83,47 @@ bool isActive() {
     return timer.isActive();
 }
 
+bool isScheduled(Timer::TimerFn fn) {
+    return timer.getCallback() == fn;
+}
+
 void reset() {
     timer.once(0, []() {
-        red = green = blue = 255;
-        digitalWrite(led_r, HIGH);
-        digitalWrite(led_g, HIGH);
-        digitalWrite(led_b, HIGH);
+        setColor(0, 0, 0);
     });
 }
 
-void longPressStart() {
+void touchStart() {
+    setColor(0, 0, 0);
+
     timer.every(10, []() {
-        if (green == 0) {
-            red = blue = 255;
-            digitalWrite(led_r, HIGH);
-            digitalWrite(led_g, LOW);
-            digitalWrite(led_b, HIGH);
+        if (blue == 255) {
+            setColor(0, 0, 255);
+            timer.reset();
             return;
         }
 
-        green = blue = red -= 1;
-
-        analogWrite(led_r, red);
-        analogWrite(led_g, green);
-        analogWrite(led_b, blue);
+        setColor(++red, ++green, ++blue);
     });
     timer.delay(500);
 }
 
-void longPressEnd() {
-    timer.every(500, []() {
-        red = blue = 255;
-        digitalWrite(led_r, HIGH);
-        digitalWrite(led_b, HIGH);
-        // 2:off, 1:on, 0:off
-        if (timer.repeat() == 1) {
-            green = 0;
-            digitalWrite(led_g, LOW);
-        }
-        else {
-            green = 255;
-            digitalWrite(led_g, HIGH);
-        }
-        /* reset(); */
-    }, 2);
-}
+void touchEnd() {
+    setColor(0, 0, 255);
 
-void shortPress() {
-    timer.once(0, []() {
-        red = green = 255;
-        blue = 0;
-        digitalWrite(led_r, HIGH);
-        digitalWrite(led_g, HIGH);
-        digitalWrite(led_b, LOW);
-        reset();
-        timer.delay(500);
+    // fade out over roughly 2 seconds
+    timer.every(8, []() {
+        if (blue == 0) {
+            reset();
+            return;
+        }
+        setColor(red, green, --blue);
     });
 }
 
 void invalidTouch() {
     timer.once(0, []() {
-        blue = green = 255;
-        red = 0;
-        digitalWrite(led_r, LOW);
-        digitalWrite(led_g, HIGH);
-        digitalWrite(led_b, HIGH);
+        setColor(255, 0, 0);
         reset();
         timer.delay(500);
     });
@@ -108,13 +133,12 @@ int currentDelay = 10;
 bool fadeIn = true;
 void slowingPulse() {
     currentDelay = 10;
-    red = green = blue = 255;
+    fadeIn = true;
+    setColor(0, 0, 0);
     timer.every(10, []() {
-        red = green = blue += fadeIn ? -1 : 1;
+        red = green = blue += fadeIn ? 1 : -1;
 
-        analogWrite(led_r, red);
-        analogWrite(led_g, green);
-        analogWrite(led_b, blue);
+        setColor(red, green, blue);
 
         if (red == 0 || red == 255) {
             fadeIn = !fadeIn;
@@ -125,65 +149,54 @@ void slowingPulse() {
 }
 
 void sunrise() {
-    digitalWrite(led_r, HIGH);
-    digitalWrite(led_g, HIGH);
-    digitalWrite(led_b, HIGH);
-    red = green = blue = 255;
+    setColor(0, 0, 0);
 
     timer.every(1000, []() {
-        analogWrite(led_r, --red);
-
         // add in a little green for orange-yellowish color
         int frame = timer.repeat();
         if (frame % 15 == 0)
-            analogWrite(led_g, --green);
+            green++;
+
+        setColor(++red, green, blue);
     }, 254);
 }
 
 void error() {
-    red = 0;
-    blue = green = 255;
-    digitalWrite(led_r, LOW);
-    digitalWrite(led_g, HIGH);
-    digitalWrite(led_b, HIGH);
+    setColor(255, 0, 0);
 
-    timer.every(500, []() {
-        green = blue = 255;
-        digitalWrite(led_g, HIGH);
-        digitalWrite(led_b, HIGH);
+    timer.every(250, []() {
         // 2:off, 1:on, 0:off
         if (timer.repeat() == 1) {
-            red = 0;
-            digitalWrite(led_r, LOW);
+            setColor(255, 0, 0);
         }
         else {
-            red = 255;
-            digitalWrite(led_r, HIGH);
+            setColor(0, 0, 0);
         }
     }, 2);
 }
 
 void success() {
-    green = 0;
-    red = blue = 255;
-    digitalWrite(led_r, HIGH);
-    digitalWrite(led_g, LOW);
-    digitalWrite(led_b, HIGH);
+    setColor(0, 255, 0);
 
-    timer.every(500, []() {
-        red = blue = 255;
-        digitalWrite(led_r, HIGH);
-        digitalWrite(led_b, HIGH);
-        // 2:off, 1:on, 0:off
-        if (timer.repeat() == 1) {
-            green = 0;
-            digitalWrite(led_g, LOW);
+    timer.every(10, []() {
+        if (green == 0) {
+            reset();
+            return;
         }
-        else {
-            green = 255;
-            digitalWrite(led_g, HIGH);
-        }
-    }, 2);
+        setColor(0, --green, 0);
+    });
+}
+
+void mode1() {
+    setColor(255, 0, 255);
+}
+
+void mode2() {
+    setColor(255, 255, 0);
+}
+
+void mode3() {
+    setColor(0, 255, 255);
 }
 
 }

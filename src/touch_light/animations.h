@@ -18,20 +18,23 @@ void update();
 // Returns true if there is currently an animation scheduled, false otherwise
 bool isActive();
 
+// Returns true if the animation is currently scheduled
+bool isScheduled(Timer::TimerFn fn);
+
+// Sets the LEDs to an RGB value (0-255, 0=off, 255=on)
+void setColor(byte r, byte g, byte b);
+
 // ===================
 // Animation Functions
 //
 // Resets LEDs, stops timer
 void reset();
 
-// Slowly fades in LEDs, then switches to green after a successful "long" press
-void longPressStart();
+// Slowly fades in LEDs, then switches to blue after a successful "long" press
+void touchStart();
 
-// Blinks green for a "short" press
-void longPressEnd();
-
-// Blinks blue for a "short" press
-void shortPress();
+// Blinks blue
+void touchEnd();
 
 // Blinks red if a "long" press was started but not finished
 void invalidTouch();
@@ -47,6 +50,11 @@ void error();
 
 // Flashes green once
 void success();
+
+// modes
+void mode1();
+void mode2();
+void mode3();
 };
 
 #endif
