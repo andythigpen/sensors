@@ -94,8 +94,6 @@ void reset() {
 }
 
 void touchStart() {
-    setColor(0, 0, 0);
-
     timer.every(10, []() {
         if (blue == 255) {
             setColor(0, 0, 255);
@@ -142,10 +140,15 @@ void slowingPulse() {
 
         if (red == 0 || red == 255) {
             fadeIn = !fadeIn;
-            currentDelay += 10;
-            timer.delay(currentDelay);
+            if (red == 0) {
+                currentDelay += 50;
+                timer.delay(currentDelay);
+            }
         }
-    });
+
+        if (timer.repeat() == 0)
+            reset();
+    }, 30890);
 }
 
 void sunrise() {
@@ -176,7 +179,8 @@ void error() {
 }
 
 void success() {
-    setColor(0, 255, 0);
+    // swap green and blue (min: 100)
+    setColor(0, blue >= 100 ? blue : 100, 0);
 
     timer.every(10, []() {
         if (green == 0) {
@@ -188,15 +192,21 @@ void success() {
 }
 
 void mode1() {
-    setColor(255, 0, 255);
+    timer.once(0, []() {
+        setColor(255, 0, 255);
+    });
 }
 
 void mode2() {
-    setColor(255, 255, 0);
+    timer.once(0, []() {
+        setColor(255, 255, 0);
+    });
 }
 
 void mode3() {
-    setColor(0, 255, 255);
+    timer.once(0, []() {
+        setColor(0, 255, 255);
+    });
 }
 
 }

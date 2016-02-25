@@ -19,6 +19,7 @@
 #include "touch.h"
 #include "timer.h"
 #include "animations.h"
+#include "mode.h"
 
 #define SENSOR_VERSION  "0.1"
 #define DEBUG
@@ -41,36 +42,12 @@
 #define SUNRISE     7
 #define MAX_SCENE   7   // this should always == the last scene
 
-#define MAX_MODE    3
 
 // MySensors
 MySensor gw;
 MyMessage msg(CHILD_ID, V_SCENE_ON);
 bool responseReceived = false;
-byte mode = 0;
-Timer modeTimer;
 
-// Sets the current "mode" for the touch commands
-//TODO:
-void setMode(byte m) {
-    mode = m;
-    if (mode >= MAX_MODE)
-        mode = 0;   // wrap
-
-    switch (mode) {
-        case 0: animations::reset(); break;
-        case 1: animations::mode1(); break;
-        case 2: animations::mode2(); break;
-        case 3: animations::mode3(); break;
-    }
-
-    // reset back to 0
-    if (mode != 0) {
-        modeTimer.once(5000, []() {
-            mode = 0;
-        });
-    }
-}
 
 // Sends the scene to the gateway and optionally waits for a response
 bool sendScene(int scene, bool blocking=true, int ms=2000) {
@@ -166,18 +143,20 @@ void onLongTouch(touch::TouchEvent &event) {
     animations::touchEnd();
 
     if (event.pads == ~(~0 << TOTAL_PADS))
-        success = sendScene(SCRIPT2);
+        success = sendScene(SCRIPT2 + (mode::get() * MAX_SCENE));
     else if (event.pads == _BV(0))
-        success = sendScene(LIGHTS_ON);
+        success = sendScene(LIGHTS_ON + (mode::get() * MAX_SCENE));
     else if (event.pads == _BV(1))
-        success = setMode(mode++);
+        success = mode::set(1);
     else if (event.pads == _BV(2))
-        success = sendScene(LIGHTS_OFF);
+        success = sendScene(LIGHTS_OFF + (mode::get() * MAX_SCENE));
 
 #ifdef DEBUG
     Serial.print("long  | ");
     Serial.println(success);
 #endif
+
+    mode::resetTimeout();
 
     if (!success)
         animations::error();
@@ -189,16 +168,20 @@ void onShortTouch(touch::TouchEvent &event) {
     animations::touchEnd();
 
     if (event.pads == ~(~0 << TOTAL_PADS))
-        success = sendScene(SCRIPT1);
+        success = sendScene(SCRIPT1 + (mode::get() * MAX_SCENE));
     else if (event.pads == _BV(0))
-        success = sendScene(BRIGHTEN);
+        success = sendScene(BRIGHTEN + (mode::get() * MAX_SCENE));
+    else if (event.pads == _BV(1) && mode::get() != 0)
+        success = mode::next();
     else if (event.pads == _BV(2))
-        success = sendScene(DIM);
+        success = sendScene(DIM + (mode::get() * MAX_SCENE));
 
 #ifdef DEBUG
     Serial.print("short | ");
     Serial.println(success);
 #endif
+
+    mode::resetTimeout();
 
     if (!success)
         animations::error();
@@ -278,6 +261,7 @@ void setup() {
 void loop() {
     touch::update();
     animations::update();
+    mode::update();
     gw.process();
 
 #ifdef DEBUG
