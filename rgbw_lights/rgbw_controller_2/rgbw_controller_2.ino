@@ -7,7 +7,7 @@
 
 
 // Configuration
-#define SENSOR_VERSION      "1.1"
+#define SENSOR_VERSION      "1.2"
 #define DEBUG               1
 #define NUM_TOP_LEDS        56
 #define NUM_BOTTOM_LEDS     34
@@ -160,6 +160,7 @@ namespace lights {
         }
         uint32_t color;
         uint32_t prevColor;
+        uint8_t prevBri;
         Adafruit_NeoPixel &strip;
 
         struct {
@@ -259,7 +260,7 @@ namespace lights {
         }
 
         bool isOn() {
-            return color != 0;
+            return color != 0 && animation.bri != 0;
         }
 
         void getRGBW(char *rgbwStr) {
@@ -342,15 +343,19 @@ namespace lights {
         }
 
         void turnOn() {
-            animation.color = prevColor;
+            if (prevBri)
+                animation.bri = prevBri;
+            else
+                animation.bri = 255;
+
             if (animation.color == 0)
                 animation.color = strip.Color(0, 0, 0, 255);
             resetAnimation();
         }
 
         void turnOff() {
-            prevColor = color;
-            animation.color = 0;
+            prevBri = animation.bri;
+            animation.bri = 0;
             resetAnimation();
         }
 
