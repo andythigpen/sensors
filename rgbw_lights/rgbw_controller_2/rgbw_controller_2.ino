@@ -275,7 +275,7 @@ namespace lights {
         }
 
         void update() {
-#if DEBUG
+#if 0
             Serial.print("update: ");
             Serial.print(strip.getPin());
             Serial.print(" color:");
@@ -362,7 +362,7 @@ namespace lights {
         }
 
         void draw() {
-#if DEBUG
+#if 0
             Serial.print("draw: ");
             Serial.println(strip.getPin());
 #endif
@@ -564,6 +564,7 @@ void readEncoder() {
 
 void sendStatus() {
     char rgbwStr[9];
+    uint8_t val;
 
     msg.setSensor(CHILD_TOP_ID);
     msg.setType(V_RGBW);
@@ -574,7 +575,8 @@ void sendStatus() {
     gw.send(msg.set(lights::top.isOn()));
 
     msg.setType(V_PERCENTAGE);
-    gw.send(msg.set(lights::top.get(MODE_BRI)));
+    val = lights::top.get(MODE_BRI);
+    gw.send(msg.set(map(val, 0, 255, 0, 100)));
 
     msg.setSensor(CHILD_BOTTOM_ID);
     msg.setType(V_RGBW);
@@ -585,7 +587,8 @@ void sendStatus() {
     gw.send(msg.set(lights::bottom.isOn()));
 
     msg.setType(V_PERCENTAGE);
-    gw.send(msg.set(lights::bottom.get(MODE_BRI)));
+    val = lights::bottom.get(MODE_BRI);
+    gw.send(msg.set(map(val, 0, 255, 0, 100)));
 
     timeout::status = millis() + TIMEOUT_STATUS;
 }
