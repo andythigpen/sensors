@@ -14,7 +14,7 @@
 #include <MySensor.h>
 #include "Adafruit_MPR121.h"
 
-#define SENSOR_VERSION  "0.2"
+#define SENSOR_VERSION  "0.5"
 #define DEBUG           1
 #define CHILD_ID        1
 
@@ -23,22 +23,27 @@
 #define SAMPLE_INTERVAL 1000    // ms to update values from MPR121
 #define TRIGGER_LIMIT   2       // num of pads that must be triggered to count
 #define UPDATE_TIMES    30      // if state hasn't changed send updates after this count
+#define NUM_SAMPLES     20
+#define THRESHOLD       15
+#define LED_PIN         4
 
 
-// values are specific to the sensors and were determined through experimentation
-const float noise[NUM_PADS] = {4.0, 4.0, 2.5, 2.5};
-const float lwm[NUM_PADS] = {3.4, 5.0, 2.5, 1.7};
-const float hwm[NUM_PADS] = {1.5, 2.5, 1.0, 0.6};
-float baseline[NUM_PADS];
-float avg[NUM_PADS];
-float peak[NUM_PADS];
 uint8_t occupied[NUM_PADS] = {0};
 uint8_t totalTriggered = 0;
 uint8_t bedOccupied = 0;
 uint8_t updateCounter = 0;
 
+uint8_t samples[NUM_PADS][NUM_SAMPLES];
+uint8_t iter = 0;
+
+uint8_t baseline[NUM_PADS];
+uint8_t hwm[NUM_PADS];
+uint8_t lwm[NUM_PADS];
+
+
 #define FAST_ALPHA       0.7
 #define SLOW_ALPHA       0.1
+#define VERY_SLOW_ALPHA  0.001
 
 
 // MySensors
@@ -56,33 +61,71 @@ Adafruit_MPR121 mpr121 = Adafruit_MPR121();
 #endif
 
 
-
-float runningAvg(float current, float prev, float alpha) {
-    return alpha * current + (1.0 - alpha) * prev;
+void blinkLed(int times, int waitMs) {
+    for (uint8_t i = 0; i < times; ++i) {
+        gw.wait(waitMs);
+        digitalWrite(LED_PIN, HIGH);
+        gw.wait(waitMs);
+        digitalWrite(LED_PIN, LOW);
+    }
 }
 
+void receiveMessage(const MyMessage &message);
 
+// calibration must occur when the sensors are in the default state
 void calibrate() {
-    gw.sleep(5000);
-    for (uint8_t cnt = 0; cnt < 10; ++cnt) {
+    digitalWrite(LED_PIN, HIGH);
+    gw.wait(1000);
+    digitalWrite(LED_PIN, LOW);
+    gw.send(msg.set(0));
+
+    LOG_LN_DEBUG("Calibrating...");
+    blinkLed(5, 500);
+    blinkLed(2, 100);
+
+    uint8_t led = 0;
+    for (iter = 0; iter < NUM_SAMPLES; ++iter) {
         for (uint8_t i = 0; i < NUM_PADS; ++i) {
             uint8_t current = mpr121.filteredData(i);
-            if (cnt == 0)
-                baseline[i] = (float)current;
-            else
-                baseline[i] = runningAvg(current, baseline[i], FAST_ALPHA);
+            if (iter == 0) {
+                baseline[i] = current;
+                lwm[i] = hwm[i] = current;
+            }
+            samples[i][iter] = current;
 
-            avg[i] = baseline[i];
-            LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
+            if (current < lwm[i])
+                lwm[i] = current;
+            if (current > hwm[i])
+                hwm[i] = current;
+            //LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
+            LOG_DEBUG(lwm[i]); LOG_DEBUG("\t");
+            LOG_DEBUG(hwm[i]); LOG_DEBUG("\t");
         }
         LOG_LN_DEBUG();
-        gw.sleep(1000);
+        gw.wait(1000);
+        led = !led;
+        digitalWrite(LED_PIN, led);
     }
+
+    for (uint8_t i = 0; i < NUM_PADS; ++i) {
+        baseline[i] = ((hwm[i] - lwm[i]) / 2) + lwm[i];
+        LOG_DEBUG(lwm[i]); LOG_DEBUG("\t");
+        LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
+        LOG_DEBUG(hwm[i]);
+        LOG_LN_DEBUG();
+    }
+
+    iter = 0;
+    digitalWrite(LED_PIN, LOW);
+    blinkLed(2, 100);
 }
 
 
 void setup() {
-    gw.begin(NULL, 16);
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+
+    gw.begin(receiveMessage, 16, false, 0);
     gw.sendSketchInfo("Bed Sensor", SENSOR_VERSION);
     gw.present(CHILD_ID, S_MOTION);
 
@@ -93,10 +136,6 @@ void setup() {
         while (1);
     }
 
-    gw.sleep(1000);
-    gw.send(msg.set(0));
-
-    LOG_LN_DEBUG("Calibrating...");
     calibrate();
 
     LOG_LN_DEBUG("Ready.");
@@ -104,42 +143,29 @@ void setup() {
 
 
 void loop() {
+    totalTriggered = 0;
     for (uint8_t i = 0; i < NUM_PADS; ++i) {
         uint8_t current = mpr121.filteredData(i);
-        float alpha = 0.0;
+        samples[i][iter] = current;
 
-        if ((current > baseline[i] + noise[i]) ||
-                (current < baseline[i] - noise[i])) {
-            // ignore values > 2 times our noise band
-            if (abs(baseline[i] - current) < 2 * noise[i])
-                alpha = FAST_ALPHA;
+        uint8_t maxval = 0;
+        uint8_t minval = 255;
+        for (uint8_t j = 0; j < NUM_SAMPLES; ++j) {
+            if (samples[i][j] < minval)
+                minval = samples[i][j];
+            else if (samples[i][j] > maxval)
+                maxval = samples[i][j];
         }
-        else
-            alpha = SLOW_ALPHA;
 
-        // running average of sensor value
-        avg[i] = runningAvg(current, avg[i], alpha);
-
-        // peak detection
-        if (avg[i] > peak[i])
-            peak[i] = avg[i];
-
-        // presence detection
-        if (!occupied[i] && avg[i] < baseline[i] - lwm[i]) {
-            occupied[i] = 1;
-            totalTriggered += 1;
-            baseline[i] = peak[i];
-        }
-        else if (occupied[i] && avg[i] > baseline[i] - hwm[i]) {
-            occupied[i] = 0;
-            totalTriggered -= 1;
-            peak[i] = 0;
-        }
+        uint8_t midval = ((maxval - minval) / 2) + minval;
+        occupied[i] = midval < lwm[i] ? 1 : 0;
+        totalTriggered += occupied[i];
 
         LOG_DEBUG(current); LOG_DEBUG("\t");
-        LOG_DEBUG(avg[i]); LOG_DEBUG("\t");
         LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
-        LOG_DEBUG(peak[i]); LOG_DEBUG("\t");
+        LOG_DEBUG(midval); LOG_DEBUG("\t");
+        LOG_DEBUG(minval); LOG_DEBUG("\t");
+        LOG_DEBUG(maxval); LOG_DEBUG("\t");
         LOG_DEBUG(occupied[i]); LOG_DEBUG("\t");
     }
 
@@ -157,8 +183,17 @@ void loop() {
         }
         bedOccupied = 0;
     }
-
     LOG_LN_DEBUG();
 
-    gw.sleep(SAMPLE_INTERVAL);
+    iter += 1;
+    if (iter >= NUM_SAMPLES)
+        iter = 0;
+
+    gw.wait(SAMPLE_INTERVAL);
+}
+
+void receiveMessage(const MyMessage &message) {
+    if (message.type == V_VAR1) {
+        calibrate();
+    }
 }
