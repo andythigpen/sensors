@@ -460,10 +460,10 @@ void onTimeoutMode() {
 #if DEBUG
     Serial.println("timeout mode");
 #endif
-    timeout::active = false;
     state::setMode(0);
     state::setEncoder(lights::top.get(state::mode));
     sendStatus();
+    timeout::active = false;
 }
 
 // Called when status timer expires
@@ -571,6 +571,7 @@ void sendStatus() {
     char rgbwStr[9];
     uint8_t val;
 
+    // top light status
     msg.setSensor(CHILD_TOP_ID);
     msg.setType(V_RGBW);
     lights::top.getRGBW(rgbwStr);
@@ -583,6 +584,10 @@ void sendStatus() {
     val = lights::top.get(MODE_BRI);
     gw.send(msg.set(map(val, 0, 255, 0, 100)));
 
+    msg.setType(V_VAR2);
+    gw.send(msg.set(timeout::active));
+
+    // bottom light status
     msg.setSensor(CHILD_BOTTOM_ID);
     msg.setType(V_RGBW);
     lights::bottom.getRGBW(rgbwStr);
@@ -594,6 +599,9 @@ void sendStatus() {
     msg.setType(V_PERCENTAGE);
     val = lights::bottom.get(MODE_BRI);
     gw.send(msg.set(map(val, 0, 255, 0, 100)));
+
+    msg.setType(V_VAR2);
+    gw.send(msg.set(timeout::active));
 
     timeout::status = millis() + TIMEOUT_STATUS;
 }
