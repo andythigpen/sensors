@@ -14,9 +14,10 @@
 #include <MySensor.h>
 #include "Adafruit_MPR121.h"
 
-#define SENSOR_VERSION  "0.5"
-#define DEBUG           1
-#define CHILD_ID        1
+#define SENSOR_VERSION           "0.6"
+#define DEBUG                    1
+#define CHILD_OCCUPIED_ID        1
+#define CHILD_PADS_ID            2
 
 #define MPR121_ADDR     0x5A    // I2C address
 #define NUM_PADS        4
@@ -24,9 +25,7 @@
 #define TRIGGER_LIMIT   2       // num of pads that must be triggered to count
 #define UPDATE_TIMES    30      // if state hasn't changed send updates after this count
 #define NUM_SAMPLES     20
-#define THRESHOLD       15
 #define LED_PIN         4
-
 
 uint8_t occupied[NUM_PADS] = {0};
 uint8_t totalTriggered = 0;
@@ -36,19 +35,13 @@ uint8_t updateCounter = 0;
 uint8_t samples[NUM_PADS][NUM_SAMPLES];
 uint8_t iter = 0;
 
-uint8_t baseline[NUM_PADS];
-uint8_t hwm[NUM_PADS];
+uint8_t avg[NUM_PADS];
 uint8_t lwm[NUM_PADS];
-
-
-#define FAST_ALPHA       0.7
-#define SLOW_ALPHA       0.1
-#define VERY_SLOW_ALPHA  0.001
 
 
 // MySensors
 MySensor gw;
-MyMessage msg(CHILD_ID, V_TRIPPED);
+MyMessage msg;
 
 Adafruit_MPR121 mpr121 = Adafruit_MPR121();
 
@@ -71,13 +64,17 @@ void blinkLed(int times, int waitMs) {
 }
 
 void receiveMessage(const MyMessage &message);
+void sendLwmStatus();
 
 // calibration must occur when the sensors are in the default state
 void calibrate() {
+    uint8_t hwm[NUM_PADS];
+
     digitalWrite(LED_PIN, HIGH);
     gw.wait(1000);
     digitalWrite(LED_PIN, LOW);
-    gw.send(msg.set(0));
+    bedOccupied = 0;
+    sendOccupiedStatus();
 
     LOG_LN_DEBUG("Calibrating...");
     blinkLed(5, 500);
@@ -88,7 +85,7 @@ void calibrate() {
         for (uint8_t i = 0; i < NUM_PADS; ++i) {
             uint8_t current = mpr121.filteredData(i);
             if (iter == 0) {
-                baseline[i] = current;
+                avg[i] = current;
                 lwm[i] = hwm[i] = current;
             }
             samples[i][iter] = current;
@@ -97,7 +94,6 @@ void calibrate() {
                 lwm[i] = current;
             if (current > hwm[i])
                 hwm[i] = current;
-            //LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
             LOG_DEBUG(lwm[i]); LOG_DEBUG("\t");
             LOG_DEBUG(hwm[i]); LOG_DEBUG("\t");
         }
@@ -108,9 +104,9 @@ void calibrate() {
     }
 
     for (uint8_t i = 0; i < NUM_PADS; ++i) {
-        baseline[i] = ((hwm[i] - lwm[i]) / 2) + lwm[i];
+        avg[i] = ((hwm[i] - lwm[i]) / 2) + lwm[i];
         LOG_DEBUG(lwm[i]); LOG_DEBUG("\t");
-        LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
+        LOG_DEBUG(avg[i]); LOG_DEBUG("\t");
         LOG_DEBUG(hwm[i]);
         LOG_LN_DEBUG();
     }
@@ -118,6 +114,8 @@ void calibrate() {
     iter = 0;
     digitalWrite(LED_PIN, LOW);
     blinkLed(2, 100);
+    sendSensorStatus();
+    sendLwmStatus();
 }
 
 
@@ -127,7 +125,12 @@ void setup() {
 
     gw.begin(receiveMessage, 16, false, 0);
     gw.sendSketchInfo("Bed Sensor", SENSOR_VERSION);
-    gw.present(CHILD_ID, S_MOTION);
+    gw.present(CHILD_OCCUPIED_ID, S_MOTION);
+    // w/ 4 pads - 2-5 are avg, 6-9 are lwm
+    for (uint8_t i = 0; i < NUM_PADS; i++) {
+        gw.present(CHILD_PADS_ID + i, S_CUSTOM);
+        gw.present(CHILD_PADS_ID + i + NUM_PADS, S_CUSTOM);
+    }
 
     LOG_LN_DEBUG("Bed occupancy sensor");
 
@@ -143,6 +146,8 @@ void setup() {
 
 
 void loop() {
+    uint8_t prevBedOccupied = bedOccupied;
+
     totalTriggered = 0;
     for (uint8_t i = 0; i < NUM_PADS; ++i) {
         uint8_t current = mpr121.filteredData(i);
@@ -157,39 +162,56 @@ void loop() {
                 maxval = samples[i][j];
         }
 
-        uint8_t midval = ((maxval - minval) / 2) + minval;
-        occupied[i] = midval < lwm[i] ? 1 : 0;
+        avg[i] = ((maxval - minval) / 2) + minval;
+        occupied[i] = avg[i] < lwm[i] ? 1 : 0;
         totalTriggered += occupied[i];
 
         LOG_DEBUG(current); LOG_DEBUG("\t");
-        LOG_DEBUG(baseline[i]); LOG_DEBUG("\t");
-        LOG_DEBUG(midval); LOG_DEBUG("\t");
+        LOG_DEBUG(avg[i]); LOG_DEBUG("\t");
         LOG_DEBUG(minval); LOG_DEBUG("\t");
         LOG_DEBUG(maxval); LOG_DEBUG("\t");
         LOG_DEBUG(occupied[i]); LOG_DEBUG("\t");
     }
-
-    if (totalTriggered >= TRIGGER_LIMIT) {
-        if (!bedOccupied || updateCounter++ > UPDATE_TIMES) {
-            gw.send(msg.set(1));
-            updateCounter = 0;
-        }
-        bedOccupied = 1;
-    }
-    else {
-        if (bedOccupied || updateCounter++ > UPDATE_TIMES) {
-            gw.send(msg.set(0));
-            updateCounter = 0;
-        }
-        bedOccupied = 0;
-    }
     LOG_LN_DEBUG();
+
+    bedOccupied = totalTriggered >= TRIGGER_LIMIT ? 1 : 0;
+
+    if (updateCounter++ > UPDATE_TIMES) {
+        sendOccupiedStatus();
+        sendSensorStatus();
+        updateCounter = 0;
+    }
+    else if (bedOccupied != prevBedOccupied) {
+        sendOccupiedStatus();
+    }
 
     iter += 1;
     if (iter >= NUM_SAMPLES)
         iter = 0;
 
     gw.wait(SAMPLE_INTERVAL);
+}
+
+void sendOccupiedStatus() {
+    msg.setSensor(CHILD_OCCUPIED_ID);
+    msg.setType(V_TRIPPED);
+    gw.send(msg.set(bedOccupied));
+}
+
+void sendSensorStatus() {
+    for (uint8_t i = 0; i < NUM_PADS; i++) {
+        msg.setSensor(CHILD_PADS_ID + i);
+        msg.setType(V_VAR1);
+        gw.send(msg.set(avg[i]));
+    }
+}
+
+void sendLwmStatus() {
+    for (uint8_t i = 0; i < NUM_PADS; i++) {
+        msg.setSensor(CHILD_PADS_ID + i + NUM_PADS);
+        msg.setType(V_VAR1);
+        gw.send(msg.set(lwm[i]));
+    }
 }
 
 void receiveMessage(const MyMessage &message) {
